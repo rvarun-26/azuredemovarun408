@@ -61,7 +61,7 @@ stages:
     condition: succeeded()
     jobs:
       - deployment: ApplyDeployment
-        environment: "prod"
+        environment: "prod408"
         strategy:
           runOnce:
             deploy:
