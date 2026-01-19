@@ -8,20 +8,25 @@ variables:
   - group: vg-iac
 
 stages:
+  # -------------------------
+  # Stage 1: Validate + Plan
+  # -------------------------
   - stage: PLAN
     displayName: "Terraform PLAN"
     jobs:
       - job: PlanJob
+        displayName: "Format, Validate, Plan"
         steps:
           - checkout: self
 
+          # Install Terraform on agent
           - powershell: |
               choco install terraform -y
               terraform -version
             displayName: "Install Terraform"
 
           - task: AzureCLI@2
-            displayName: "Terraform Init"
+            displayName: "Terraform Init (Remote State)"
             inputs:
               azureSubscription: "SC-Azure-Demo-408"
               scriptType: "ps"
@@ -49,32 +54,39 @@ stages:
                   -var="rg_name=$(TF_RG_NAME)" `
                   -var="storage_account_name=$(TF_SA_NAME)" `
                   -var="container_name=$(TF_CONTAINER_NAME)" `
-                  -var="tags={ env=\"$(TF_ENV)\" }"
+                  -var="tags=$(TF_ENV)"
 
           - publish: tfplan
             artifact: tfplan
-            displayName: "Publish tfplan"
+            displayName: "Publish tfplan artifact"
 
+  # -------------------------
+  # Stage 2: Apply (Approval)
+  # -------------------------
   - stage: APPLY
-    displayName: "Terraform APPLY"
+    displayName: "Terraform APPLY (Approval)"
     dependsOn: PLAN
     condition: succeeded()
     jobs:
       - deployment: ApplyDeployment
-        environment: "prod408"
+        displayName: "Apply Terraform"
+        environment: "prod408" # This links to your Environment with Approval
         strategy:
           runOnce:
             deploy:
               steps:
                 - checkout: self
+
+                - powershell: |
+                    choco install terraform -y
+                    terraform -version
+                  displayName: "Install Terraform"
+
                 - download: current
                   artifact: tfplan
 
-                - powershell: choco install terraform -y
-                  displayName: "Install Terraform"
-
                 - task: AzureCLI@2
-                  displayName: "Terraform Init"
+                  displayName: "Terraform Init (Remote State)"
                   inputs:
                     azureSubscription: "SC-Azure-Demo-408"
                     scriptType: "ps"
@@ -87,7 +99,7 @@ stages:
                         -backend-config="key=$(TFSTATE_KEY)"
 
                 - task: AzureCLI@2
-                  displayName: "Terraform Apply"
+                  displayName: "Terraform apply (from plan)"
                   inputs:
                     azureSubscription: "SC-Azure-Demo-408"
                     scriptType: "ps"
