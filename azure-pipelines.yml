@@ -1,0 +1,96 @@
+trigger:
+  - main
+
+pool:
+  vmImage: windows-latest
+
+variables:
+  - group: vg-iac
+
+stages:
+  - stage: PLAN
+    displayName: "Terraform PLAN"
+    jobs:
+      - job: PlanJob
+        steps:
+          - checkout: self
+
+          - powershell: |
+              choco install terraform -y
+              terraform -version
+            displayName: "Install Terraform"
+
+          - task: AzureCLI@2
+            displayName: "Terraform Init"
+            inputs:
+              azureSubscription: "SC-Azure-Demo-408"
+              scriptType: "ps"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                terraform init `
+                  -backend-config="resource_group_name=$(TFSTATE_RG)" `
+                  -backend-config="storage_account_name=$(TFSTATE_STORAGE)" `
+                  -backend-config="container_name=$(TFSTATE_CONTAINER)" `
+                  -backend-config="key=$(TFSTATE_KEY)"
+
+          - powershell: terraform validate
+            displayName: "Terraform validate"
+
+          - task: AzureCLI@2
+            displayName: "Terraform plan"
+            inputs:
+              azureSubscription: "SC-Azure-Demo-408"
+              scriptType: "ps"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                terraform plan `
+                  -out=tfplan `
+                  -var="location=$(TF_LOCATION)" `
+                  -var="rg_name=$(TF_RG_NAME)" `
+                  -var="storage_account_name=$(TF_SA_NAME)" `
+                  -var="container_name=$(TF_CONTAINER_NAME)" `
+                  -var="tags={ env=\"$(TF_ENV)\" }"
+
+          - publish: tfplan
+            artifact: tfplan
+            displayName: "Publish tfplan"
+
+  - stage: APPLY
+    displayName: "Terraform APPLY"
+    dependsOn: PLAN
+    condition: succeeded()
+    jobs:
+      - deployment: ApplyDeployment
+        environment: "prod"
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - download: current
+                  artifact: tfplan
+
+                - powershell: choco install terraform -y
+                  displayName: "Install Terraform"
+
+                - task: AzureCLI@2
+                  displayName: "Terraform Init"
+                  inputs:
+                    azureSubscription: "SC-Azure-Demo-408"
+                    scriptType: "ps"
+                    scriptLocation: "inlineScript"
+                    inlineScript: |
+                      terraform init `
+                        -backend-config="resource_group_name=$(TFSTATE_RG)" `
+                        -backend-config="storage_account_name=$(TFSTATE_STORAGE)" `
+                        -backend-config="container_name=$(TFSTATE_CONTAINER)" `
+                        -backend-config="key=$(TFSTATE_KEY)"
+
+                - task: AzureCLI@2
+                  displayName: "Terraform Apply"
+                  inputs:
+                    azureSubscription: "SC-Azure-Demo-408"
+                    scriptType: "ps"
+                    scriptLocation: "inlineScript"
+                    inlineScript: |
+                      terraform apply -auto-approve "$(Pipeline.Workspace)\tfplan\tfplan"
